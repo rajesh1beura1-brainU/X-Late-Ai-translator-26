@@ -1,0 +1,10 @@
+{
+  "name": "X-Late AI Translator",
+  "description": "Live Ai translator ",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

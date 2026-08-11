@@ -1,0 +1,43 @@
+{
+  "users": {
+    "default_xlate_user": {
+      "userId": "default_xlate_user",
+      "email": "default_xlate_user@xlate.ai",
+      "name": "default_xlate_user",
+      "preferredSourceLang": "auto",
+      "preferredTargetLang": "hi-IN",
+      "encryptionEnabled": true,
+      "autoSpeakTranslation": true,
+      "autoExtractTasks": true,
+      "morningAlertsEnabled": true
+    }
+  },
+  "devices": {
+    "default_xlate_user": [
+      {
+        "deviceId": "device_1786459776848_jstyq",
+        "deviceName": "Mobile Web App",
+        "os": "iPhone",
+        "browser": "Browser",
+        "ip": "127.0.0.1",
+        "lastActive": "2026-08-11T15:06:57.857Z",
+        "createdAt": "2026-08-11T14:49:37.002Z",
+        "isCurrent": true,
+        "revoked": false
+      }
+    ]
+  },
+  "plans": {
+    "default_xlate_user": {
+      "userId": "default_xlate_user",
+      "planType": "FREE",
+      "totalSessionsAllowed": 100,
+      "usedSessions": 50,
+      "remainingSessions": 50,
+      "maxMinutesPerSession": 20,
+      "purchaseHistory": []
+    }
+  },
+  "tasks": {},
+  "history": {}
+}
