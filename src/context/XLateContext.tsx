@@ -191,45 +191,23 @@ export const XLateProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const liveDebounceTimer = React.useRef<any>(null);
 
-  // Initialize Auth Session & Register Device
-  useEffect(() => {
-    async function initSession() {
-      try {
-        const res = await fetch('/api/auth/session', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            deviceId,
-            deviceName: 'Mobile Web App',
-            os: navigator.platform || 'Web',
-            browser: navigator.userAgent.includes('Chrome') ? 'Chrome' : 'Browser'
-          })
-        });
+  const getAuthToken = () => {
+    return localStorage.getItem('xlate_auth_token') || sessionStorage.getItem('xlate_auth_token') || '';
+  };
 
-        if (res.ok) {
-          const data = await res.json();
-          setUserProfile(data.profile);
-          setUserPlan(data.plan);
-          setActiveDevices(data.activeDevices || []);
-          if (data.revokedOldestDevice) {
-            setDeviceRevokedMessage(`Active device limit (2) reached. Oldest device "${data.revokedOldestDevice}" was automatically revoked.`);
-          }
-        }
-      } catch (err) {
-        console.error('Session init error:', err);
-      }
+  const authFetch = React.useCallback((url: string, options: RequestInit = {}) => {
+    const token = getAuthToken();
+    const headers = new Headers(options.headers || {});
+    if (token && !headers.has('Authorization')) {
+      headers.set('Authorization', `Bearer ${token}`);
     }
-
-    initSession();
-    fetchTasks();
-    fetchHistory();
-    fetchMorningAlerts();
-  }, [deviceId]);
+    return fetch(url, { ...options, headers });
+  }, []);
 
   // Fetch History from API & Local Encrypted Cache
-  async function fetchHistory() {
+  const fetchHistory = React.useCallback(async () => {
     try {
-      const res = await fetch('/api/history');
+      const res = await authFetch('/api/history');
       if (res.ok) {
         const data = await res.json();
         setHistorySessions(data);
@@ -243,12 +221,12 @@ export const XLateProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         if (decrypted) setHistorySessions(decrypted);
       }
     }
-  }
+  }, [authFetch]);
 
   // Fetch Tasks
-  async function fetchTasks() {
+  const fetchTasks = React.useCallback(async () => {
     try {
-      const res = await fetch('/api/tasks');
+      const res = await authFetch('/api/tasks');
       if (res.ok) {
         const data = await res.json();
         setTasks(Array.isArray(data) ? data : []);
@@ -267,12 +245,12 @@ export const XLateProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         // Safe fallback
       }
     }
-  }
+  }, [authFetch]);
 
   // Fetch Morning Alerts
-  async function fetchMorningAlerts() {
+  const fetchMorningAlerts = React.useCallback(async () => {
     try {
-      const res = await fetch('/api/tasks/morning-alerts');
+      const res = await authFetch('/api/tasks/morning-alerts');
       if (res.ok) {
         const data = await res.json();
         setMorningAlerts(Array.isArray(data) ? data : []);
@@ -280,7 +258,50 @@ export const XLateProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     } catch (err: any) {
       console.warn('Morning alerts fetch notice:', err?.message || err);
     }
-  }
+  }, [authFetch]);
+
+  // Initialize Auth Session & Register Device
+  useEffect(() => {
+    async function initSession() {
+      try {
+        const savedToken = getAuthToken();
+        const res = await fetch('/api/auth/session', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(savedToken ? { 'Authorization': `Bearer ${savedToken}` } : {})
+          },
+          body: JSON.stringify({
+            deviceId,
+            deviceName: 'Mobile Web App',
+            os: navigator.platform || 'Web',
+            browser: navigator.userAgent.includes('Chrome') ? 'Chrome' : 'Browser'
+          })
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          if (data.token) {
+            localStorage.setItem('xlate_auth_token', data.token);
+          }
+          setUserProfile(data.profile);
+          setUserPlan(data.plan);
+          setActiveDevices(data.activeDevices || []);
+          if (data.revokedOldestDevice) {
+            setDeviceRevokedMessage(`Active device limit (2) reached. Oldest device "${data.revokedOldestDevice}" was automatically revoked.`);
+          }
+        }
+      } catch (err) {
+        console.error('Session init error:', err);
+      } finally {
+        fetchTasks();
+        fetchHistory();
+        fetchMorningAlerts();
+      }
+    }
+
+    initSession();
+  }, [deviceId, fetchTasks, fetchHistory, fetchMorningAlerts]);
 
   const swapLanguages = () => {
     if (sourceLang === 'auto') {
@@ -418,7 +439,7 @@ export const XLateProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       reader.readAsDataURL(blob);
       const base64Data = await base64Promise;
 
-      const res = await fetch('/api/translate/audio', {
+      const res = await authFetch('/api/translate/audio', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -551,7 +572,7 @@ export const XLateProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const base64Data = await base64Promise;
 
       try {
-        const res = await fetch('/api/translate/audio', {
+        const res = await authFetch('/api/translate/audio', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -673,7 +694,7 @@ export const XLateProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
 
     try {
-      const res = await fetch('/api/translate/live', {
+      const res = await authFetch('/api/translate/live', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -756,7 +777,7 @@ export const XLateProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
 
     try {
-      const res = await fetch('/api/history', {
+      const res = await authFetch('/api/history', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(sessionObj)
@@ -777,7 +798,7 @@ export const XLateProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const deleteHistorySession = async (id: string) => {
     try {
-      await fetch(`/api/history/${id}`, { method: 'DELETE' });
+      await authFetch(`/api/history/${id}`, { method: 'DELETE' });
       fetchHistory();
     } catch (err) {
       console.error('Delete history session error:', err);
@@ -787,7 +808,7 @@ export const XLateProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const clearHistory = async () => {
     try {
-      await fetch('/api/history', { method: 'DELETE' });
+      await authFetch('/api/history', { method: 'DELETE' });
       setHistorySessions([]);
     } catch (err) {
       console.error('Clear history error:', err);
@@ -796,7 +817,7 @@ export const XLateProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const buySessionPack = async () => {
     try {
-      const res = await fetch('/api/billing/buy-pack', {
+      const res = await authFetch('/api/billing/buy-pack', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -816,7 +837,7 @@ export const XLateProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const refreshCredits = async (count: number = 100) => {
     try {
-      const res = await fetch('/api/billing/refresh', {
+      const res = await authFetch('/api/billing/refresh', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ count })
@@ -832,7 +853,7 @@ export const XLateProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const revokeDevice = async (deviceIdToRevoke: string) => {
     try {
-      const res = await fetch('/api/devices/revoke', {
+      const res = await authFetch('/api/devices/revoke', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ deviceIdToRevoke })
@@ -851,7 +872,7 @@ export const XLateProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const newStatus = target?.status === 'DONE' ? 'PENDING' : 'DONE';
 
     try {
-      const res = await fetch(`/api/tasks/${taskId}/status`, {
+      const res = await authFetch(`/api/tasks/${taskId}/status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus })
@@ -867,7 +888,7 @@ export const XLateProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const deleteTask = async (taskId: string) => {
     try {
-      await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' });
+      await authFetch(`/api/tasks/${taskId}`, { method: 'DELETE' });
       fetchTasks();
       fetchMorningAlerts();
     } catch (err) {
@@ -876,7 +897,7 @@ export const XLateProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const addTaskManually = async (task: Partial<AITask>): Promise<AITask> => {
-    const res = await fetch('/api/tasks', {
+    const res = await authFetch('/api/tasks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(task)
@@ -888,7 +909,7 @@ export const XLateProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const ackMorningAlert = async (taskId: string) => {
     try {
-      await fetch(`/api/tasks/${taskId}/morning-alert-ack`, { method: 'POST' });
+      await authFetch(`/api/tasks/${taskId}/morning-alert-ack`, { method: 'POST' });
       fetchMorningAlerts();
     } catch (err) {
       console.error('Ack morning alert error:', err);
@@ -914,7 +935,7 @@ export const XLateProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         reader.readAsDataURL(audioBlob);
       });
 
-      const res = await fetch('/api/translate/lyrics', {
+      const res = await authFetch('/api/translate/lyrics', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -952,7 +973,7 @@ export const XLateProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
 
     try {
-      const res = await fetch('/api/translate/lyrics', {
+      const res = await authFetch('/api/translate/lyrics', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

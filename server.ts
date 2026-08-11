@@ -25,17 +25,20 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
-const SESSION_SECRET = process.env.SESSION_SECRET || 'xlate-ai-live-translator-secret-2026';
+const SESSION_SECRET = process.env.SESSION_SECRET;
 
 // Token generation & verification
 export function generateAuthToken(userId: string, email: string): string {
+  if (!SESSION_SECRET) {
+    throw new Error('SESSION_SECRET environment variable is missing.');
+  }
   const payload = Buffer.from(JSON.stringify({ u: userId, e: email, ts: Date.now() })).toString('base64url');
   const sig = crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('hex');
   return `${payload}.${sig}`;
 }
 
 export function verifyAuthToken(token: string): { userId: string; email: string } | null {
-  if (!token) return null;
+  if (!token || !SESSION_SECRET) return null;
   const parts = token.split('.');
   if (parts.length === 2) {
     const [payloadB64, sig] = parts;
@@ -45,28 +48,34 @@ export function verifyAuthToken(token: string): { userId: string; email: string 
     if (bufSig.length === bufExpected.length && crypto.timingSafeEqual(bufSig, bufExpected)) {
       try {
         const json = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf-8'));
-        return { userId: json.u, email: json.e };
+        if (json && json.u && json.e) {
+          return { userId: json.u, email: json.e };
+        }
       } catch {
         return null;
       }
     }
   }
-  // Fallback default token or raw userId
-  if (token.startsWith('user_') || token.startsWith('device_')) {
-    return { userId: token, email: `${token}@xlate.ai` };
-  }
-  return { userId: 'default_xlate_user', email: 'user@xlate.ai' };
+  return null;
 }
 
-function getAuthUser(req: Request): { userId: string; email: string } {
+function getAuthUser(req: Request): { userId: string; email: string } | null {
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
-    const token = authHeader.replace('Bearer ', '').trim();
-    const verified = verifyAuthToken(token);
-    if (verified) return verified;
+    const token = authHeader.substring(7).trim();
+    return verifyAuthToken(token);
   }
-  const xUserId = (req.headers['x-user-id'] as string) || 'default_xlate_user';
-  return { userId: xUserId, email: `${xUserId}@xlate.ai` };
+  return null;
+}
+
+function requireAuth(req: Request, res: Response, next: NextFunction) {
+  const user = getAuthUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Unauthorized: Valid authentication session token required.' });
+    return;
+  }
+  (req as any).user = user;
+  next();
 }
 
 // --- API ROUTES ---
@@ -83,15 +92,18 @@ app.get('/api/health', (req: Request, res: Response) => {
 
 // Auth Session & Device Registration (STRICT 2-DEVICE LIMIT)
 app.post('/api/auth/session', (req: Request, res: Response) => {
-  const user = getAuthUser(req);
+  const existingUser = getAuthUser(req);
   const { deviceId, deviceName, os, browser } = req.body;
 
   const effectiveDeviceId = deviceId || `device_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
   const ip = req.ip || '127.0.0.1';
 
-  const { profile, plan } = dbStore.getOrCreateUser(user.userId, user.email);
+  const userId = existingUser ? existingUser.userId : `user_${effectiveDeviceId}`;
+  const email = existingUser ? existingUser.email : `${userId}@xlate.ai`;
+
+  const { profile, plan } = dbStore.getOrCreateUser(userId, email);
   const deviceReg = dbStore.registerDeviceSession(
-    user.userId,
+    userId,
     effectiveDeviceId,
     deviceName || 'Current Device',
     os || 'Web Browser',
@@ -99,7 +111,7 @@ app.post('/api/auth/session', (req: Request, res: Response) => {
     ip
   );
 
-  const token = generateAuthToken(user.userId, user.email);
+  const token = generateAuthToken(userId, email);
 
   res.json({
     token,
@@ -113,14 +125,14 @@ app.post('/api/auth/session', (req: Request, res: Response) => {
 });
 
 // Device Management
-app.get('/api/devices', (req: Request, res: Response) => {
-  const user = getAuthUser(req);
+app.get('/api/devices', requireAuth, (req: Request, res: Response) => {
+  const user = (req as any).user;
   const devices = dbStore.getActiveDevices(user.userId);
   res.json({ activeDevices: devices, maxAllowed: 2 });
 });
 
-app.post('/api/devices/revoke', (req: Request, res: Response) => {
-  const user = getAuthUser(req);
+app.post('/api/devices/revoke', requireAuth, (req: Request, res: Response) => {
+  const user = (req as any).user;
   const { deviceIdToRevoke } = req.body;
   if (!deviceIdToRevoke) {
     res.status(400).json({ error: 'deviceIdToRevoke is required' });
@@ -132,8 +144,8 @@ app.post('/api/devices/revoke', (req: Request, res: Response) => {
 });
 
 // Live Speech & Text Translation
-app.post('/api/translate/live', async (req: Request, res: Response) => {
-  const user = getAuthUser(req);
+app.post('/api/translate/live', requireAuth, async (req: Request, res: Response) => {
+  const user = (req as any).user;
   const { text, sourceLang, targetLang, deviceId, context } = req.body;
 
   if (!text || typeof text !== 'string' || !text.trim()) {
@@ -199,8 +211,8 @@ app.post('/api/translate/live', async (req: Request, res: Response) => {
 });
 
 // Audio Blob Translation
-app.post('/api/translate/audio', async (req: Request, res: Response) => {
-  const user = getAuthUser(req);
+app.post('/api/translate/audio', requireAuth, async (req: Request, res: Response) => {
+  const user = (req as any).user;
   const { audioBase64, mimeType, sourceLang, targetLang } = req.body;
 
   if (!audioBase64) {
@@ -250,8 +262,8 @@ app.post('/api/translate/audio', async (req: Request, res: Response) => {
 });
 
 // Live Song & Lyrics Translation Endpoint
-app.post('/api/translate/lyrics', async (req: Request, res: Response) => {
-  const user = getAuthUser(req);
+app.post('/api/translate/lyrics', requireAuth, async (req: Request, res: Response) => {
+  const user = (req as any).user;
   const sessionCheck = dbStore.consumeSession(user.userId);
 
   const { audioBase64, mimeType, lyricsOrText, targetLangCode } = req.body;
@@ -279,14 +291,14 @@ app.post('/api/translate/lyrics', async (req: Request, res: Response) => {
 });
 
 // History Endpoints
-app.get('/api/history', (req: Request, res: Response) => {
-  const user = getAuthUser(req);
+app.get('/api/history', requireAuth, (req: Request, res: Response) => {
+  const user = (req as any).user;
   const history = dbStore.getHistory(user.userId);
   res.json(history);
 });
 
-app.post('/api/history', (req: Request, res: Response) => {
-  const user = getAuthUser(req);
+app.post('/api/history', requireAuth, (req: Request, res: Response) => {
+  const user = (req as any).user;
   const session = req.body;
   if (!session || !session.id) {
     res.status(400).json({ error: 'Valid session object required' });
@@ -296,65 +308,65 @@ app.post('/api/history', (req: Request, res: Response) => {
   res.json(saved);
 });
 
-app.delete('/api/history/:id', (req: Request, res: Response) => {
-  const user = getAuthUser(req);
+app.delete('/api/history/:id', requireAuth, (req: Request, res: Response) => {
+  const user = (req as any).user;
   const success = dbStore.deleteHistorySession(user.userId, req.params.id);
   res.json({ success });
 });
 
-app.delete('/api/history', (req: Request, res: Response) => {
-  const user = getAuthUser(req);
+app.delete('/api/history', requireAuth, (req: Request, res: Response) => {
+  const user = (req as any).user;
   dbStore.clearAllHistory(user.userId);
   res.json({ success: true });
 });
 
 // Tasks & Reminders Endpoints
-app.get('/api/tasks', (req: Request, res: Response) => {
-  const user = getAuthUser(req);
+app.get('/api/tasks', requireAuth, (req: Request, res: Response) => {
+  const user = (req as any).user;
   const tasks = dbStore.getTasks(user.userId);
   res.json(tasks);
 });
 
-app.post('/api/tasks', (req: Request, res: Response) => {
-  const user = getAuthUser(req);
+app.post('/api/tasks', requireAuth, (req: Request, res: Response) => {
+  const user = (req as any).user;
   const saved = dbStore.saveTask(user.userId, req.body);
   res.json(saved);
 });
 
-app.patch('/api/tasks/:id/status', (req: Request, res: Response) => {
-  const user = getAuthUser(req);
+app.patch('/api/tasks/:id/status', requireAuth, (req: Request, res: Response) => {
+  const user = (req as any).user;
   const { status } = req.body;
   const updated = dbStore.updateTaskStatus(user.userId, req.params.id, status || 'DONE');
   res.json(updated);
 });
 
-app.delete('/api/tasks/:id', (req: Request, res: Response) => {
-  const user = getAuthUser(req);
+app.delete('/api/tasks/:id', requireAuth, (req: Request, res: Response) => {
+  const user = (req as any).user;
   const success = dbStore.deleteTask(user.userId, req.params.id);
   res.json({ success });
 });
 
-app.get('/api/tasks/morning-alerts', (req: Request, res: Response) => {
-  const user = getAuthUser(req);
+app.get('/api/tasks/morning-alerts', requireAuth, (req: Request, res: Response) => {
+  const user = (req as any).user;
   const alerts = dbStore.getMorningAlerts(user.userId);
   res.json(alerts);
 });
 
-app.post('/api/tasks/:id/morning-alert-ack', (req: Request, res: Response) => {
-  const user = getAuthUser(req);
+app.post('/api/tasks/:id/morning-alert-ack', requireAuth, (req: Request, res: Response) => {
+  const user = (req as any).user;
   dbStore.markMorningAlertShown(user.userId, req.params.id);
   res.json({ success: true });
 });
 
 // Billing & Entitlements ($5 Pack for 20 Sessions)
-app.get('/api/billing/plan', (req: Request, res: Response) => {
-  const user = getAuthUser(req);
+app.get('/api/billing/plan', requireAuth, (req: Request, res: Response) => {
+  const user = (req as any).user;
   const plan = dbStore.getUserPlan(user.userId);
   res.json(plan);
 });
 
-app.post('/api/billing/buy-pack', (req: Request, res: Response) => {
-  const user = getAuthUser(req);
+app.post('/api/billing/buy-pack', requireAuth, (req: Request, res: Response) => {
+  const user = (req as any).user;
   const { packName, price, sessionsCount } = req.body;
   const updatedPlan = dbStore.addSessionPack(
     user.userId,
@@ -365,15 +377,15 @@ app.post('/api/billing/buy-pack', (req: Request, res: Response) => {
   res.json({ success: true, plan: updatedPlan });
 });
 
-app.post('/api/billing/refresh', (req: Request, res: Response) => {
-  const user = getAuthUser(req);
+app.post('/api/billing/refresh', requireAuth, (req: Request, res: Response) => {
+  const user = (req as any).user;
   const { count } = req.body;
   const updatedPlan = dbStore.refreshUsageCredits(user.userId, count || 100);
   res.json({ success: true, plan: updatedPlan });
 });
 
 // Calendar Export Integration
-app.post('/api/calendar/export', (req: Request, res: Response) => {
+app.post('/api/calendar/export', requireAuth, (req: Request, res: Response) => {
   const { title, description, dueDate, dueTime } = req.body;
 
   const startIso = `${dueDate || '2026-08-10'}T${(dueTime || '10:00').replace(':', '')}00Z`;
@@ -404,8 +416,8 @@ END:VCALENDAR`;
 });
 
 // Email Sharing
-app.post('/api/email/share', async (req: Request, res: Response) => {
-  const user = getAuthUser(req);
+app.post('/api/email/share', requireAuth, async (req: Request, res: Response) => {
+  const user = (req as any).user;
   const { recipientEmail, subject, htmlContent } = req.body;
 
   if (!recipientEmail) {

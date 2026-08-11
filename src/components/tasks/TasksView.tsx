@@ -51,10 +51,15 @@ export const TasksView: React.FC = () => {
   };
 
   const handleExportCalendar = async (task: AITask, platform: 'google' | 'outlook' | 'zoho' | 'ics') => {
+    const token = localStorage.getItem('xlate_auth_token') || sessionStorage.getItem('xlate_auth_token') || '';
+
     try {
       const res = await fetch('/api/calendar/export', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
         body: JSON.stringify({
           title: task.title,
           description: task.description || 'X-Late AI Live Translation Commitment',

@@ -19,10 +19,15 @@ export const HistoryView: React.FC = () => {
     const email = prompt('Enter recipient email address to send transcript:');
     if (!email) return;
 
+    const token = localStorage.getItem('xlate_auth_token') || sessionStorage.getItem('xlate_auth_token') || '';
+
     try {
       const res = await fetch('/api/email/share', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+        },
         body: JSON.stringify({
           recipientEmail: email,
           subject: `X-Late Transcript: ${session.title}`,
